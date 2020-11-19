@@ -1,19 +1,71 @@
 use anyhow::{Result, bail};
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum IcmpMessageType {
+    EchoResponse,
+    EchoRequest,
+    DestinationUnreachable(u8),
+    SourceQuench,
+    Redirect(u8),
+    TimeExceeded(u8),
+    ParameterProblem,
+    Timestamp,
+    TimestampReply,
+    InformationRequest,
+    InformationReply,
+}
+
+
+impl IcmpMessageType {
+    pub fn into_type_and_code(&self) -> (u8, u8) {
+        use IcmpMessageType::*;
+        match *self {
+            EchoRequest => (8, 0),
+            EchoResponse => (0, 0),
+            DestinationUnreachable(code) => (3, code),
+            SourceQuench => (4, 0),
+            Redirect(code) => (5, code),
+            TimeExceeded(code) => (11, code),
+            ParameterProblem => (12, 0),
+            Timestamp => (13, 0),
+            TimestampReply => (14, 0),
+            InformationRequest => (15, 0),
+            InformationReply => (16, 0),
+        }
+    }
+
+    pub fn from_type_and_code(icmp_type: u8, icmp_code: u8) -> Result<Self> {
+        use IcmpMessageType::*;
+        match (icmp_type, icmp_code) {
+            (0, _) => Ok(EchoResponse),
+            (8, _) => Ok(EchoRequest),
+            (3, code) => Ok(DestinationUnreachable(code)),
+            (4, _) => Ok(SourceQuench),
+            (5, code) => Ok(Redirect(code)),
+            (11, code) => Ok(TimeExceeded(code)),
+            (12, _) => Ok(ParameterProblem),
+            (13, _) => Ok(Timestamp),
+            (14, _) => Ok(TimestampReply),
+            (15, _) => Ok(InformationRequest),
+            (16, _) => Ok(InformationReply),
+            (_, _) => bail!("Invalid type or code")
+        }
+    }
+}
+
+
 #[derive(Debug, Clone)]
-pub struct PacketData {
-    _type: u8,
-    code: u8,
+pub struct IcmpData {
+    _type: IcmpMessageType,
     chksum: u16,
     identifier: u16,
     seq_no: u16,
     message: Vec<u8>,
 }
 
-impl PacketData {
+impl IcmpData {
     pub fn new(
-        _type: u8,
-        code: u8,
+        mut _type: IcmpMessageType,
         mut chksum: Option<u16>,
         mut identifier: Option<u16>,
         mut seq_no: Option<u16>,
@@ -37,7 +89,6 @@ impl PacketData {
 
         Ok(Self {
             _type,
-            code,
             chksum: chksum.unwrap(),
             identifier: identifier.unwrap(),
             seq_no: seq_no.unwrap(),
@@ -57,9 +108,10 @@ impl PacketData {
         // +-+-+-+-+-
         let mut data = Vec::new();
 
-        data.push(self._type);
-
-        data.push(self.code);
+        let (icmp_type, icmp_code) = self._type.into_type_and_code();
+        
+        data.push(icmp_type);
+        data.push(icmp_code);
 
         // Set checksum to zero
         data.push(0);
@@ -87,8 +139,10 @@ impl PacketData {
     }
 
     pub fn parse(data: &[u8]) -> Result<Self> {
-        let _type = data[0];
-        let code = data[1];
+        let icmp_type = data[0];
+        let icmp_code = data[1];
+
+        let _type = IcmpMessageType::from_type_and_code(icmp_type, icmp_code)?;
 
         let chksum = ((data[2] as u16) << 8) + data[3] as u16;
 
@@ -99,42 +153,22 @@ impl PacketData {
 
         Ok(Self {
             _type,
-            code,
             chksum,
             identifier,
             seq_no,
             message,
         })
     }
+
+    pub fn get_type(&self) -> &IcmpMessageType {
+        &self._type
+    }
+
+    pub fn get_seq_no(&self) -> u16 {
+        self.seq_no
+    }
 }
 
-// BROKEN!
-// fn calculate_checksum(data: &Vec<u8>) -> u16 {
-//     let mut data = data.clone();
-
-//     let mut checksum: u16 = 0;
-
-//     // Pad with 00000000
-//     if data.len() % 2 != 0 {
-//         data.push(0);
-//     }
-
-//     let mut index = 0;
-//     loop {
-//         if index == data.len() {
-//             break;
-//         }
-
-//         let word = ((data[index] as u16) << 8) + (data[index + 1] as u16);
-
-//         const MOD: u32 = (1 << 16) as u32;
-//         if (checksum as u32 + word as u32) <= MOD {
-//             checksum = checksum + word;
-//         } else {
-//             checksum = ((checksum as u32 + word as u32 + 1u32) % MOD as u32) as u16;
-//         }
-
-//         index += 2;
-//     }
-//     checksum
-// }
+pub fn new_echo_request(message: Vec<u8>, identifier: u16, seq_no: u16) -> IcmpData {
+    IcmpData::new(IcmpMessageType::EchoRequest, None, Some(identifier), Some(seq_no), Some(message)).expect("Panic! at the Disco")
+}
